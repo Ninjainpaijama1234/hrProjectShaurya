@@ -1,206 +1,276 @@
-#  ─────────────────────────────────────────────────────────────
-#  HR ATTRITION INSIGHTS DASHBOARD
-#  Streamlit • © 2025 Shaurya (SP Jain GMBA)
-#  Purpose: Enterprise-grade analytics for CHRO, HR Director, and ExCo
-#  ─────────────────────────────────────────────────────────────
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import roc_auc_score, confusion_matrix
+
+###############################################################################
+# HR ATTRITION SUPER‑DASHBOARD – v2.0                                         #
+# Covers virtually every dimension & combination in EA.csv                    #
+# Author: Shaurya                                                             #
+###############################################################################
 
 st.set_page_config(
-    page_title="HR Attrition Insights",
+    page_title="HR Attrition Super‑Dashboard",
     page_icon="📊",
     layout="wide",
 )
 
-# ----------------------- DATA INGESTION -----------------------
+# --------------------------- DATA LOADING ------------------------------------
 @st.cache_data
-def load_data():
-    df = pd.read_csv("EA (1).csv")
+def load_data(path="EA (1).csv"):
+    df = pd.read_csv(path)
+    df["AttritionFlag"] = df["Attrition"].map({"Yes": 1, "No": 0})
     return df
 
 df = load_data()
 
-# Label-encode Attrition for quick math
-attr_map = {"Yes": 1, "No": 0}
-df["AttritionFlag"] = df["Attrition"].map(attr_map)
+# --------------------------- GLOBAL CONTROLS ---------------------------------
+with st.sidebar:
+    st.header("🔍 Global Filters")
+    dept_opts   = ["All"] + sorted(df.Department.unique())
+    role_opts   = ["All"] + sorted(df.JobRole.unique())
+    gender_opts = ["All"] + sorted(df.Gender.unique())
+    travel_opts = ["All"] + sorted(df.BusinessTravel.unique())
 
-# ----------------------- SIDEBAR FILTERS ----------------------
-st.sidebar.header("🔧 Global Filters")
-dept_list  = ["All"] + sorted(df["Department"].unique().tolist())
-role_list  = ["All"] + sorted(df["JobRole"].unique().tolist())
-gender_list = ["All"] + sorted(df["Gender"].unique().tolist())
+    dept_sel   = st.selectbox("Department", dept_opts)
+    role_sel   = st.selectbox("Job Role", role_opts)
+    gender_sel = st.selectbox("Gender", gender_opts)
+    travel_sel = st.selectbox("Business Travel", travel_opts)
 
-dept_sel   = st.sidebar.selectbox("Department", dept_list)
-role_sel   = st.sidebar.selectbox("Job Role", role_list)
-gender_sel = st.sidebar.selectbox("Gender", gender_list)
-age_range  = st.sidebar.slider("Age Range", int(df.Age.min()), int(df.Age.max()),
-                               (int(df.Age.min()), int(df.Age.max())))
-yrs_range  = st.sidebar.slider("Years at Company", int(df.YearsAtCompany.min()),
-                               int(df.YearsAtCompany.max()),
-                               (int(df.YearsAtCompany.min()), int(df.YearsAtCompany.max())))
+    age_rng  = st.slider("Age Range", int(df.Age.min()), int(df.Age.max()), (25,50))
+    tenure_rng = st.slider("Years at Company", int(df.YearsAtCompany.min()),
+                            int(df.YearsAtCompany.max()), (0,10))
+
+    st.markdown("---")
+    misc_tab = st.expander("ℹ️ About this dashboard")
+    with misc_tab:
+        st.write("""This upgraded version includes **30+ visualisations** arranged across 6 thematic tabs, plus an auto‑training demo model. Use the **sidebar filters** to slice every chart in real time.""")
 
 # Apply filters
 fdf = df.copy()
-if dept_sel != "All":
-    fdf = fdf[fdf["Department"] == dept_sel]
-if role_sel != "All":
-    fdf = fdf[fdf["JobRole"] == role_sel]
-if gender_sel != "All":
-    fdf = fdf[fdf["Gender"] == gender_sel]
+if dept_sel   != "All": fdf = fdf[fdf.Department==dept_sel]
+if role_sel   != "All": fdf = fdf[fdf.JobRole==role_sel]
+if gender_sel != "All": fdf = fdf[fdf.Gender==gender_sel]
+if travel_sel != "All": fdf = fdf[fdf.BusinessTravel==travel_sel]
 
-fdf = fdf[(fdf["Age"].between(age_range[0], age_range[1])) &
-          (fdf["YearsAtCompany"].between(yrs_range[0], yrs_range[1]))]
+fdf = fdf[fdf.Age.between(age_rng[0], age_rng[1]) &
+          fdf.YearsAtCompany.between(tenure_rng[0], tenure_rng[1])]
 
-# ----------------------- KPI CARDS (1, 2, 3) ------------------
-st.title("📊 HR Attrition Insights Dashboard")
-st.markdown("Strategic talent analytics—macro to micro—for data-driven HR decisions.")
+# --------------------------- KPI CARDS ---------------------------------------
+st.title("📊 HR Attrition Super‑Dashboard")
 
-kpi1, kpi2, kpi3 = st.columns(3)
-with kpi1:
-    st.metric("Current Headcount", int(fdf.shape[0]))
-with kpi2:
-    st.metric("Attrition Rate",
-              f"{fdf.AttritionFlag.mean():.1%}",
-              help="Percentage of employees who left among the filtered cohort")
-with kpi3:
-    st.metric("Average Monthly Income", f"${fdf.MonthlyIncome.mean():,.0f}")
+k1,k2,k3,k4 = st.columns(4)
+with k1: st.metric("Employees", fdf.shape[0])
+with k2: st.metric("Attrition Rate", f"{fdf.AttritionFlag.mean():.1%}")
+with k3: st.metric("Avg Income", f"${fdf.MonthlyIncome.mean():,.0f}")
+with k4: st.metric("Avg Age",  f"{fdf.Age.mean():.1f} yrs")
 
 st.divider()
 
-# ----------------------- TAB LAYOUT ---------------------------
-macro_tab, micro_tab, model_tab, data_tab = st.tabs(
-    ["🌐 Macro View", "🔎 Micro View", "🤖 ML Model", "🗄 Raw Data"]
-)
+# --------------------------- TAB STRUCTURE -----------------------------------
+macro_tab, demo_tab, comp_tab, perf_tab, inter_tab, model_tab, data_tab = st.tabs([
+    "🌐 Macro Trends", "👥 Demographics", "💰 Compensation", "🎯 Engagement & Performance",
+    "🎛 Interactive Explorer", "🤖 Predictive", "🗄 Raw Data"])
 
-# ------------- 🌐 MACRO VIEW CHARTS (4-10) --------------------
+###############################################################################
+# 🌐 MACRO TRENDS TAB (Charts 1‑7)
+###############################################################################
 with macro_tab:
-    st.subheader("Organisation-wide Patterns")
-    # 4. Attrition by Department
-    st.markdown("**Attrition by Department** helps leadership identify at-risk functions.")
-    fig1 = px.bar(fdf, x="Department", color="Attrition", barmode="group")
-    st.plotly_chart(fig1, use_container_width=True)
+    st.subheader("High‑Level Attrition Overview")
 
-    # 5. Attrition by Job Role
-    st.markdown("**Attrition by Job Role** spotlights critical roles experiencing churn.")
-    fig2 = px.bar(fdf, x="JobRole", color="Attrition", barmode="group")
-    st.plotly_chart(fig2, use_container_width=True)
+    # 1. Overall attrition pie
+    st.caption("▶︎ Company‑wide split between exits vs stays")
+    fig = px.pie(fdf, names="Attrition", hole=0.45, title="Overall Attrition Rate")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 6. Attrition by Business Travel
-    st.markdown("**Impact of Business Travel on Attrition** reveals travel burn-out trends.")
-    fig3 = px.histogram(fdf, x="BusinessTravel", color="Attrition")
-    st.plotly_chart(fig3, use_container_width=True)
+    # 2. Attrition by Department bar
+    st.caption("▶︎ Department hotspots")
+    fig = px.histogram(fdf, x="Department", color="Attrition", barmode="group")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 7. Attrition over Age Distribution
-    st.markdown("**Age Distribution vs Attrition** uncovers generational turnover.")
-    fig4 = px.histogram(fdf, x="Age", color="Attrition", nbins=20, barmode="overlay")
-    st.plotly_chart(fig4, use_container_width=True)
+    # 3. Attrition by Job Role
+    st.caption("▶︎ Job Role breakdown")
+    fig = px.histogram(fdf, x="JobRole", color="Attrition", barmode="group")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 8. Attrition vs Years at Company
-    st.markdown("**Tenure vs Attrition** highlights early-exit risk periods.")
-    fig5 = px.violin(fdf, y="YearsAtCompany", color="Attrition", box=True, points="all")
-    st.plotly_chart(fig5, use_container_width=True)
+    # 4. Heatmap Dept × JobLevel attrition rates
+    st.caption("▶︎ Heatmap – Department vs Job Level")
+    heat = pd.crosstab(fdf.Department, fdf.JobLevel, values=fdf.AttritionFlag,
+                       aggfunc="mean").fillna(0)
+    fig = px.imshow(heat, color_continuous_scale="Reds", text_auto=".1%",
+                    labels=dict(color="Attrition%"))
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 9. Monthly Income Distribution
-    st.markdown("**Compensation Distribution** shows pay spread and potential equity gaps.")
-    fig6 = px.box(fdf, y="MonthlyIncome", color="Attrition")
-    st.plotly_chart(fig6, use_container_width=True)
+    # 5. Age distribution hist
+    st.caption("▶︎ Age spectrum of stayers vs leavers")
+    fig = px.histogram(fdf, x="Age", color="Attrition", nbins=25, barmode="overlay")
+    st.plotly_chart(fig, use_container_width=True)
 
-# ------------- 🔎 MICRO VIEW CHARTS (11-17) -------------------
-with micro_tab:
-    st.subheader("Slice-and-Dice Analysis")
-    # 10. Attrition by Gender
-    st.markdown("**Gender vs Attrition** supports DE&I monitoring.")
-    fig7 = px.bar(fdf, x="Gender", color="Attrition", barmode="group")
-    st.plotly_chart(fig7, use_container_width=True)
+    # 6. YearsAtCompany violin
+    st.caption("▶︎ Tenure patterns (attrition risk highest in early years)")
+    fig = px.violin(fdf, y="YearsAtCompany", x="Attrition", box=True, points="all")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 11. Attrition by Marital Status
-    st.markdown("**Marital Status** correlations with attrition for targeted benefits.")
-    fig8 = px.bar(fdf, x="MaritalStatus", color="Attrition", barmode="group")
-    st.plotly_chart(fig8, use_container_width=True)
+    # 7. Business Travel impact
+    st.caption("▶︎ Business travel frequency vs attrition")
+    fig = px.histogram(fdf, x="BusinessTravel", color="Attrition", barmode="group")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 12. Overtime vs Attrition
-    st.markdown("**Overtime Workload** impact on employee exits.")
-    fig9 = px.pie(fdf, names="OverTime", color="Attrition",
-                  title="Attrition Split by Overtime")
-    st.plotly_chart(fig9, use_container_width=True)
+###############################################################################
+# 👥 DEMOGRAPHICS TAB (Charts 8‑13)
+###############################################################################
+with demo_tab:
+    st.subheader("Demographic Factors")
 
-    # 13. Education Field Heatmap
-    st.markdown("**Education Field vs Attrition** to align L&D initiatives.")
-    pivot = pd.crosstab(fdf["EducationField"], fdf["AttritionFlag"], normalize="index")
-    fig10 = px.imshow(pivot, text_auto=True, color_continuous_scale="Blues",
-                      aspect="auto", labels=dict(color="Attrition %"))
-    st.plotly_chart(fig10, use_container_width=True)
+    for col in ["Gender", "MaritalStatus", "EducationField", "Education"]:
+        st.caption(f"▶︎ Attrition by {col}")
+        fig = px.histogram(fdf, x=col, color="Attrition", barmode="group")
+        st.plotly_chart(fig, use_container_width=True)
 
-    # 14. DistanceFromHome vs Attrition
-    st.markdown("**Commute Distance Stress Test** – attrition likelihood by distance.")
-    fig11 = px.scatter(fdf, x="DistanceFromHome", y="MonthlyIncome",
-                       color="Attrition", size="Age", hover_data=["JobRole"])
-    st.plotly_chart(fig11, use_container_width=True)
+    # 12. Parallel categories plot
+    st.caption("▶︎ Parallel Categories – Gender × Marital × OverTime × Attrition")
+    fig = px.parallel_categories(
+        fdf, dimensions=["Gender", "MaritalStatus", "OverTime", "Attrition"],
+        color="AttritionFlag", color_continuous_scale=px.colors.sequential.Reds)
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 15. Environment Satisfaction
-    st.markdown("**Workplace Satisfaction Levels** versus attrition outcomes.")
-    fig12 = px.box(fdf, x="EnvironmentSatisfaction", y="Age",
-                   color="Attrition", points="all")
-    st.plotly_chart(fig12, use_container_width=True)
+    # 13. Scatter – Age vs Distance, sized by MonthlyIncome
+    st.caption("▶︎ Age vs Commute Distance (bubble size = Income)")
+    fig = px.scatter(fdf, x="Age", y="DistanceFromHome", size="MonthlyIncome",
+                     color="Attrition", hover_data=["JobRole"])
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 16. Work-Life Balance
-    st.markdown("**Work-Life Balance Scores** in relation to attrition.")
-    fig13 = px.histogram(fdf, x="WorkLifeBalance", color="Attrition",
-                         barmode="group")
-    st.plotly_chart(fig13, use_container_width=True)
+###############################################################################
+# 💰 COMPENSATION TAB (Charts 14‑19)
+###############################################################################
+with comp_tab:
+    st.subheader("Compensation & Benefits")
 
-    # 17. Training Times Last Year
-    st.markdown("**Training Frequency** and its protective effect on retention.")
-    fig14 = px.bar(fdf, x="TrainingTimesLastYear", color="Attrition",
-                   barmode="group")
-    st.plotly_chart(fig14, use_container_width=True)
+    # 14. MonthlyIncome distribution
+    st.caption("▶︎ Income distribution")
+    fig = px.box(fdf, y="MonthlyIncome", x="Attrition", points="all")
+    st.plotly_chart(fig, use_container_width=True)
 
-# ------------- 🤖 SIMPLE ML MODEL (18-19) ---------------------
+    # 15. MonthlyRate vs Attrition
+    st.caption("▶︎ Monthly Rate vs Attrition")
+    fig = px.violin(fdf, y="MonthlyRate", x="Attrition", box=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 16. Percent Salary Hike
+    st.caption("▶︎ Salary Hike % by Attrition")
+    fig = px.histogram(fdf, x="PercentSalaryHike", color="Attrition", nbins=15,
+                       barmode="group")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 17. StockOptionLevel
+    st.caption("▶︎ Stock Option Level vs Attrition")
+    fig = px.bar(fdf, x="StockOptionLevel", color="Attrition", barmode="group")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 18. Overtime vs Income scatter
+    st.caption("▶︎ Overtime vs Income scatter (hint: burnout + pay)")
+    fig = px.scatter(fdf, x="MonthlyIncome", y="OverTime", color="Attrition",
+                     size="Age", hover_data=["Department"])
+    st.plotly_chart(fig, use_container_width=True)
+
+###############################################################################
+# 🎯 ENGAGEMENT & PERFORMANCE TAB (Charts 20‑26)
+###############################################################################
+with perf_tab:
+    st.subheader("Engagement, Satisfaction & Performance")
+
+    eng_cols = [
+        "JobSatisfaction", "EnvironmentSatisfaction", "WorkLifeBalance",
+        "RelationshipSatisfaction", "PerformanceRating", "JobInvolvement" ]
+
+    for col in eng_cols:
+        st.caption(f"▶︎ {col} vs Attrition")
+        fig = px.histogram(fdf, x=col, color="Attrition", barmode="group")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 26. TrainingTimesLastYear
+    st.caption("▶︎ Training Times Last Year vs Attrition")
+    fig = px.box(fdf, x="Attrition", y="TrainingTimesLastYear", points="all")
+    st.plotly_chart(fig, use_container_width=True)
+
+###############################################################################
+# 🎛 INTERACTIVE EXPLORER TAB (Charts 27‑29)
+###############################################################################
+with inter_tab:
+    st.subheader("Build‑Your‑Own Comparison")
+    st.caption("Select any two categorical variables to cross‑tab attrition rates.")
+
+    cat_cols = df.select_dtypes(include="object").columns.drop("Attrition")
+    col1, col2 = st.columns(2)
+    with col1:
+        cat_x = st.selectbox("X‑axis", cat_cols, index=0)
+    with col2:
+        cat_y = st.selectbox("Y‑axis", cat_cols, index=1)
+
+    pivot = pd.crosstab(fdf[cat_y], fdf[cat_x], values=fdf["AttritionFlag"],
+                        aggfunc="mean").fillna(0)
+    fig = px.imshow(pivot, text_auto=".1%", color_continuous_scale="Viridis",
+                    labels=dict(color="Attrition %"))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 28. Correlation heatmap numerical vars
+    st.caption("▶︎ Correlation heatmap (numericals)")
+    num_corr = fdf.select_dtypes(include=["int64","float64"]).corr()
+    fig = px.imshow(num_corr, color_continuous_scale="RdBu", text_auto=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 29. Pairwise scatter (Age vs MonthlyIncome vs YearsAtCompany)
+    st.caption("▶︎ 3‑way scatter – hover to inspect")
+    fig = px.scatter_3d(fdf, x="Age", y="YearsAtCompany", z="MonthlyIncome",
+                        color="Attrition", hover_data=["JobRole"])
+    st.plotly_chart(fig, use_container_width=True)
+
+###############################################################################
+# 🤖 PREDICTIVE TAB (Charts 30‑31)
+###############################################################################
 with model_tab:
-    st.subheader("Predictive Signal Exploration")
-    st.markdown(
-        "Below model is illustrative—**not** production-ready. "
-        "It ranks the relative importance of features in predicting attrition."
-    )
+    st.subheader("Illustrative RandomForest Attrition Classifier")
+    st.caption("🔥 Prototype only – not tuned for production, but shows feature drivers.")
 
-    # Minimal preprocessing
-    model_df = fdf.select_dtypes(include=["int64", "float64"]).copy()
-    cat_cols  = fdf.select_dtypes(include=["object"]).columns
+    # Minimal encoding for categorical variables
+    model_df = fdf.copy()
     le = LabelEncoder()
-    for c in cat_cols:
-        model_df[c] = le.fit_transform(fdf[c])
+    for col in model_df.select_dtypes(include="object").columns:
+        model_df[col] = le.fit_transform(model_df[col])
 
     X = model_df.drop(columns=["AttritionFlag"])
     y = model_df["AttritionFlag"]
-
-    # 18. RandomForest Feature Importance
-    rf = RandomForestClassifier(n_estimators=200, random_state=42)
+    rf = RandomForestClassifier(n_estimators=300, max_depth=None, random_state=0)
     rf.fit(X, y)
-    importances = pd.Series(rf.feature_importances_, index=X.columns)\
-                    .sort_values(ascending=False).head(15)
+    pred_prob = rf.predict_proba(X)[:,1]
 
-    st.markdown("**Top Drivers of Attrition (Random Forest Importance)**")
-    fig15 = px.bar(importances, orientation="h", labels={"value": "Importance"})
-    st.plotly_chart(fig15, use_container_width=True)
+    auc = roc_auc_score(y, pred_prob)
+    st.metric("In‑sample ROC‑AUC", f"{auc:.2f}")
 
-    # 19. Simple ROC-AUC (optional)
-    # (streamlit display kept minimal to avoid clutter)
-    from sklearn.metrics import roc_auc_score
-    st.metric("In-sample ROC-AUC", f"{roc_auc_score(y, rf.predict_proba(X)[:,1]):.2f}")
+    # 30. Feature importances
+    imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)[:20]
+    fig = px.bar(imp, orientation="h", labels={"value":"Importance"})
+    st.plotly_chart(fig, use_container_width=True)
 
-# ------------- 🗄 RAW DATA & PIVOT TOOL (20) ------------------
+    # 31. Confusion matrix heatmap
+    st.caption("▶︎ Confusion Matrix (Cut‑off 0.5)")
+    cm = confusion_matrix(y, rf.predict(X))
+    cm_df = pd.DataFrame(cm, index=["Stay","Leave"], columns=["Pred Stay","Pred Leave"])
+    fig = px.imshow(cm_df, text_auto=True, color_continuous_scale="Blues")
+    st.plotly_chart(fig, use_container_width=True)
+
+###############################################################################
+# 🗄 RAW DATA TAB (Chart 32)
+###############################################################################
 with data_tab:
-    st.subheader("Interactive Data Explorer")
-    st.markdown(
-        "**Pivot + Filter**—use the sidebar to subset; download to Excel if needed."
-    )
+    st.subheader("Data Table & Export")
     st.dataframe(fdf, use_container_width=True)
+    st.download_button("Download current view", fdf.to_csv(index=False).encode(),
+                       "Filtered_Attrition.csv")
 
-    csv = fdf.to_csv(index=False).encode("utf-8")
-    st.download_button("Download filtered data as CSV", csv, "Attrition_subset.csv")
-
-st.success("Dashboard loaded successfully.")
+# FIN
+st.success("✨ Dashboard rendered with 32 visuals. Explore away!")
